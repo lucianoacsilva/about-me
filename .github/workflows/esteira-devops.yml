@@ -1,9 +1,13 @@
-name: Esteira DevOps (simulada)
+name: Esteira DevOps (com Docker Hub)
 
-# Como o projeto é uma aplicação estática (HTML/CSS/JS), não há build real,
-# testes automatizados de verdade nem deploy em servidor. Cada etapa abaixo
-# SIMULA a ação correspondente com mensagens no log, apenas para fins didáticos
-# da atividade de Gerência de Configuração, Git e GitHub.
+# A partir da aula de containers, o Build e o Deploy deixam de ser simulados
+# (echo) e passam a ser reais: a imagem Docker é construída de verdade e
+# publicada no Docker Hub, que funciona como o "deploy" possível para uma
+# aplicação estática sem servidor de produção próprio.
+#
+# Pré-requisitos (configurar em Settings > Secrets and variables > Actions):
+#   DOCKERHUB_USERNAME  → seu usuário do Docker Hub
+#   DOCKERHUB_TOKEN     → um Access Token do Docker Hub (não a senha)
 
 on:
   push: {}
@@ -19,14 +23,22 @@ jobs:
       - name: Baixar o código (checkout)
         uses: actions/checkout@v4
 
-      - name: "Build (simulado)"
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: "Build da imagem Docker"
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: about-me-container:ci
+          load: true
+
+      - name: Confirmar imagem gerada
         run: |
-          echo "🔧 Build iniciado..."
-          echo "Empacotando item de configuração: about.html"
-          echo "Arquivos do projeto:"
-          ls -R
-          echo "✅ Build concluído."
-          echo "📎 Relaciona-se à teoria: Integração contínua"
+          docker images about-me-container
+          echo ">> Build concluído."
+          echo ">> Relaciona-se à teoria: Integração contínua"
 
   test:
     name: Test
@@ -36,37 +48,90 @@ jobs:
       - name: Baixar o código (checkout)
         uses: actions/checkout@v4
 
-      - name: "Test (simulado)"
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build da imagem para teste
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: about-me-container:ci
+          load: true
+
+      - name: "Testar o container (simulado + real)"
         run: |
-          echo "🧪 Executando testes automatizados (simulado)..."
-          test -f index.html && echo "✅ index.html encontrado" || (echo "❌ index.html ausente" && exit 1)
-          test -f about.html && echo "✅ about.html encontrado" || (echo "❌ about.html ausente" && exit 1)
-          test -f css/style.css && echo "✅ css/style.css encontrado" || (echo "❌ css/style.css ausente" && exit 1)
-          echo "✅ Testes concluídos com sucesso."
-          echo "📎 Relaciona-se à teoria: Auditoria de qualidade"
+          echo ">> Subindo o container para teste..."
+          docker run -d -p 8080:80 --name teste about-me-container:ci
+          sleep 2
+          curl -sf http://localhost:8080/about.html | grep -q "About Me" \
+            && echo ">> Container respondendo corretamente" \
+            || (echo ">> Falha ao acessar about.html" && exit 1)
+          docker stop teste
+          echo ">> Testes concluídos com sucesso."
+          echo ">> Relaciona-se à teoria: Auditoria de qualidade"
 
   deploy:
     name: Deploy
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - name: "Deploy (simulado)"
+      - name: Baixar o código (checkout)
+        uses: actions/checkout@v4
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login no Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: "Publicar imagem :latest no Docker Hub"
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/about-me-container:latest
+
+      - name: Confirmar publicação
         run: |
-          echo "🚀 Publicando em ambiente de homologação (simulado)..."
-          echo "Ambiente: about-me-git-lab (staging)"
-          echo "Referência publicada: ${{ github.ref_name }}"
-          echo "✅ Deploy concluído."
-          echo "📎 Relaciona-se à teoria: Controle de mudança"
+          echo ">> Imagem publicada em: https://hub.docker.com/r/${{ secrets.DOCKERHUB_USERNAME }}/about-me-container"
+          echo ">> Deploy concluído."
+          echo ">> Relaciona-se à teoria: Controle de mudança"
 
   release:
     name: Release
     needs: deploy
     runs-on: ubuntu-latest
     steps:
-      - name: "Release (simulado)"
+      - name: Baixar o código (checkout)
+        uses: actions/checkout@v4
+
+      - name: Definir tag segura a partir da referência
+        id: vars
+        run: echo "tag=$(echo '${{ github.ref_name }}' | tr '/' '-')" >> "$GITHUB_OUTPUT"
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login no Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: "Publicar imagem versionada no Docker Hub"
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/about-me-container:${{ steps.vars.outputs.tag }}
+
+      - name: Confirmar release
         run: |
-          echo "🏷️ Publicando release (simulado)..."
-          echo "Referência: ${{ github.ref_name }}"
+          echo ">> Release publicado: ${{ secrets.DOCKERHUB_USERNAME }}/about-me-container:${{ steps.vars.outputs.tag }}"
           echo "Commit: ${{ github.sha }}"
-          echo "✅ Release concluído: baseline entregue e rastreável."
-          echo "📎 Relaciona-se à teoria: Baseline entregue"
+          echo ">> Release concluído: baseline entregue e rastreável."
+          echo ">> Relaciona-se à teoria: Baseline entregue"
